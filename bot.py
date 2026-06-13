@@ -161,46 +161,42 @@ async def show_preview(update: Update, url: str):
 
     await msg.edit_text(f"📥 Đang tải preview {len(raw_urls)} ảnh...")
 
-    # Tải thumb song song
     thumb_bytes = await asyncio.gather(*[download_image(u) for u in thumb_urls])
 
-    # Lưu session — size đã có sẵn, không cần HEAD lần 2
+    # Lưu session
     session_store[chat_id] = {
         "images": raw_urls,
         "sizes": raw_sizes,
     }
 
-    # Gửi album preview
-    await msg.edit_text(f"🖼 {len(raw_urls)} ảnh — chọn để tải:")
-    valid_thumbs = [(i, b) for i, b in enumerate(thumb_bytes) if b]
-    chunks = [valid_thumbs[i:i+10] for i in range(0, len(valid_thumbs), 10)]
-    for chunk in chunks:
-        media_group = [InputMediaPhoto(media=io.BytesIO(b)) for (i, b) in chunk]
-        await update.message.reply_media_group(media=media_group)
-        await asyncio.sleep(0.5)
+    await msg.edit_text(f"🖼 {len(raw_urls)} ảnh — bấm nút bên dưới mỗi ảnh để tải:")
 
-    # Inline keyboard
-    keyboard = [[
+    # Gửi từng ảnh riêng + button ngay bên dưới
+    for i, (thumb, size) in enumerate(zip(thumb_bytes, raw_sizes)):
+        if not thumb:
+            continue
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                f"⬇️ #{i+1} — {format_size(size)}",
+                callback_data=f"dl_one_{i}"
+            )
+        ]])
+        await update.message.reply_photo(
+            photo=io.BytesIO(thumb),
+            reply_markup=keyboard
+        )
+        await asyncio.sleep(0.3)
+
+    # Nút Download All ở cuối
+    keyboard_all = InlineKeyboardMarkup([[
         InlineKeyboardButton(
-            f"⬇️ Download All ({len(raw_urls)} ảnh)",
+            f"⬇️ Download All ({len(raw_urls)} ảnh — {format_size(sum(raw_sizes))})",
             callback_data="dl_all"
         )
-    ]]
-    row = []
-    for i, size in enumerate(raw_sizes):
-        row.append(InlineKeyboardButton(
-            f"#{i+1} {format_size(size)}",
-            callback_data=f"dl_one_{i}"
-        ))
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-
+    ]])
     await update.message.reply_text(
-        "👇 Chọn ảnh muốn tải:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "👇 Hoặc tải tất cả:",
+        reply_markup=keyboard_all
     )
 
 # ─── CALLBACK ─────────────────────────────────────────────────────────────────
