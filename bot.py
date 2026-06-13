@@ -210,24 +210,6 @@ async def show_preview(update: Update, url: str):
 
 # ─── CALLBACK ─────────────────────────────────────────────────────────────────
 
-async def send_image_smart(message, data: bytes, filename: str, caption: str = ""):
-    """Dưới 10MB → send_photo (vào Gallery), trên 10MB → send_document (file)"""
-    MAX_PHOTO_SIZE = 10 * 1024 * 1024  # 10MB
-
-    if len(data) <= MAX_PHOTO_SIZE:
-        await message.reply_photo(
-            photo=io.BytesIO(data),
-            caption=caption,
-            parse_mode="Markdown"
-        )
-    else:
-        await message.reply_document(
-            document=io.BytesIO(data),
-            filename=filename,
-            caption=f"⚠️ Ảnh > 10MB, gửi dạng file\n{caption}",
-            parse_mode="Markdown"
-        )
-
 async def send_as_file(message, data: bytes, filename: str, caption: str = ""):
     """Gửi ảnh dạng file document — tải về máy trực tiếp, không giới hạn 10MB"""
     await message.reply_document(
@@ -283,7 +265,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 query.message,
                 img_bytes,
                 filename=get_filename_from_url(images[idx]),
-                caption=f"#{idx+1} — {format_size(sizes[idx])}\n`{images[idx]}`"
+                caption=f"#{idx+1} — {format_size(sizes[idx])}"  # bỏ URL
             )
         else:
             await query.message.reply_text(f"❌ Không tải được ảnh #{idx+1}")
