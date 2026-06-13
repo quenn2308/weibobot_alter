@@ -48,7 +48,6 @@ def extract_weibo_id(url: str) -> str | None:
     return None
 
 async def get_raw_images(url: str) -> tuple[list[str], list[str]]:
-    """Trả về (thumb_urls, raw_urls)"""
     post_id = extract_weibo_id(url)
     if not post_id:
         print(f"[Scraper] Không extract được post_id từ: {url}")
@@ -65,13 +64,14 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str]]:
             data = resp.json()
             pics = data.get("data", {}).get("pics", [])
 
+            # DEBUG: in toàn bộ structure của pic đầu tiên
+            if pics:
+                import json
+                print(f"[DEBUG] pic[0] full structure:")
+                print(json.dumps(pics[0], indent=2, ensure_ascii=False))
+
             for pic in pics:
-                # Thumbnail nhỏ nhất
-                thumb = (
-                    pic.get("url", "") or
-                    pic.get("thumb", {}).get("url", "")
-                )
-                # Raw lớn nhất
+                thumb = pic.get("url", "")
                 raw = (
                     pic.get("large", {}).get("url") or
                     pic.get("original", {}).get("url") or
@@ -84,8 +84,6 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str]]:
                     thumb_urls.append(thumb)
                 if raw:
                     raw_urls.append(raw)
-
-            print(f"[Scraper] Tìm thấy {len(raw_urls)} ảnh")
 
         except Exception as e:
             print(f"[Scraper Error] {e}")
