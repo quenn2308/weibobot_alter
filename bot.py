@@ -68,8 +68,8 @@ async def get_best_url(pid: str) -> tuple[str, int]:
             except:
                 pass
 
-    print(f"[BEST] {best_url.split('/')[3]} → {best_size} bytes")
     return best_url, best_size
+
 # Tăng timeout và retry cho download_image
 async def download_image(url: str, timeout: int = 30, retries: int = 3) -> bytes | None:
     for attempt in range(retries):
@@ -134,8 +134,6 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str], list[int]]:
             results = await asyncio.gather(*tasks)
             raw_urls = [u for u, s in results]
             raw_sizes = [s for u, s in results]
-
-            print(f"[Scraper] {len(raw_urls)} ảnh, sizes: {[format_size(s) for s in raw_sizes]}")
 
         except Exception as e:
             print(f"[Scraper Error] {e}")
@@ -285,28 +283,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🖼 Weibo Image Bot\n\n"
         "Paste link bài post Weibo → bot hiện preview album\n"
         "→ Bấm Download All hoặc chọn từng ảnh\n\n"
-        "/links <url> — Chỉ lấy URL raw\n"
         "/all <url> — Download All Files"
     )
-
-async def cmd_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not ctx.args:
-        await update.message.reply_text("❌ Dùng: /links <weibo_url>")
-        return
-
-    url = ctx.args[0]
-    msg = await update.message.reply_text("🔍 Đang scrape...")
-    _, raw_urls, raw_sizes = await get_raw_images(url)
-
-    if not raw_urls:
-        await msg.edit_text("❌ Không tìm thấy ảnh nào.")
-        return
-
-    chunks = [raw_urls[i:i+10] for i in range(0, len(raw_urls), 10)]
-    await msg.edit_text(f"✅ Tìm thấy {len(raw_urls)} ảnh:")
-    for chunk in chunks:
-        text = "\n".join(f"`{u}`" for u in chunk)
-        await update.message.reply_text(text, parse_mode="Markdown")
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
@@ -365,7 +343,6 @@ def main():
     )
     app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("links", cmd_links))
     app.add_handler(CommandHandler("all", cmd_all))      # thêm dòng này
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
