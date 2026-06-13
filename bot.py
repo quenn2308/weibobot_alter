@@ -286,7 +286,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🖼 Weibo Image Bot\n\n"
         "Paste link bài post Weibo → bot hiện preview album\n"
         "→ Bấm Download All hoặc chọn từng ảnh\n\n"
-        "/links <url> — Chỉ lấy URL raw"
+        "/links <url> — Chỉ lấy URL raw\n"
         "/all <url> — Download All Files"
     )
 
@@ -397,7 +397,15 @@ async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Tăng timeout upload file lớn
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        read_timeout=60,
+        write_timeout=60,
+        connect_timeout=30,
+        pool_timeout=30,
+    )
+    app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("links", cmd_links))
     app.add_handler(CommandHandler("all", cmd_all))      # thêm dòng này
