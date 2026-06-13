@@ -314,12 +314,43 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await show_preview(update, text)
 
+async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("❌ Dùng: /all <weibo_url>")
+        return
+
+    url = ctx.args[0]
+    msg = await update.message.reply_text("⬇️ Đang tải tất cả ảnh...")
+
+    thumb_urls, raw_urls, raw_sizes = await get_raw_images(url)
+    if not raw_urls:
+        await msg.edit_text("❌ Không tìm thấy ảnh nào.")
+        return
+
+    await msg.edit_text(f"📦 Tìm thấy {len(raw_urls)} ảnh, đang tải...")
+
+    all_bytes = await asyncio.gather(*[download_image(u) for u in raw_urls])
+    success = 0
+    for i, (img_bytes, size) in enumerate(zip(all_bytes, raw_sizes)):
+        if img_bytes:
+            await send_image_smart(
+                msg,
+                img_bytes,
+                filename=get_filename_from_url(raw_urls[i]),
+                caption=f"#{i+1} — {format_size(size)}"
+            )
+            success += 1
+            await asyncio.sleep(0.5)
+
+    await msg.edit_text(f"✅ Hoàn tất: {success}/{len(raw_urls)} ảnh")
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("links", cmd_links))
+    app.add_handler(CommandHandler("all", cmd_all))      # thêm dòng này
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     print("Bot đang chạy...")
