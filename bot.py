@@ -46,16 +46,41 @@ def extract_weibo_id(url: str) -> str | None:
         if m:
             return m.group(1)
     return None
+async def get_best_url(pid: str) -> tuple[str, int]:
+    """Thử các size, trả về (url_lớn_nhất, size_bytes)"""
+    sizes = ["orj1080", "mw2000", "orj480", "large", "orj360"]
+    best_url = ""
+    best_size = 0
 
-async def get_raw_images(url: str) -> tuple[list[str], list[str]]:
+    async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
+        for s in sizes:
+            url = f"https://wx2.sinaimg.cn/{s}/{pid}.jpg"
+            try:
+                resp = await client.head(url, timeout=8)
+                if resp.status_code == 200:
+                    size = int(resp.headers.get("content-length", 0))
+                    print(f"[SIZE] {s}/{pid[:16]}... → {size} bytes")
+                    if size > best_size:
+                        best_size = size
+                        best_url = url
+            except:
+                pass
+
+    print(f"[BEST] {best_url.split('/')[3]} → {best_size} bytes")
+    return best_url, best_size
+
+
+async def get_raw_images(url: str) -> tuple[list[str], list[str], list[int]]:
+    """Trả về (thumb_urls, raw_urls, raw_sizes)"""
     post_id = extract_weibo_id(url)
     if not post_id:
         print(f"[Scraper] Không extract được post_id từ: {url}")
-        return [], []
+        return [], [], []
 
     print(f"[Scraper] post_id: {post_id}")
     thumb_urls = []
     raw_urls = []
+    raw_sizes = []
     api_url = f"https://m.weibo.cn/statuses/show?id={post_id}"
 
     async with httpx.AsyncClient(headers=HEADERS_API, follow_redirects=True) as client:
@@ -64,39 +89,32 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str]]:
             data = resp.json()
             pics = data.get("data", {}).get("pics", [])
 
-            # DEBUG: in toàn bộ structure của pic đầu tiên
-            if pics:
-                import json
-                print(f"[DEBUG] pic[0] full structure:")
-                print(json.dumps(pics[0], indent=2, ensure_ascii=False))
-
+            # Check size tất cả ảnh song song
+            tasks = []
             for pic in pics:
-                thumb = pic.get("url", "")
                 pid = pic.get("pid", "")
-            
+                thumb = pic.get("url", "")
+                thumb_urls.append(thumb)
                 if pid:
-                    # Thử tất cả size, lấy cái có content-length lớn nhất
-                    candidate_sizes = ["orj1080", "orj480", "large", "mw2000", "orj360"]
-                    candidate_urls = [f"https://wx2.sinaimg.cn/{s}/{pid}.jpg" for s in candidate_sizes]
-            
-                    # In ra để debug
-                    print(f"[DEBUG] pid: {pid}")
-                    for u in candidate_urls:
-                        print(f"[DEBUG] candidate: {u}")
-            
-                    raw = candidate_urls[0]  # tạm dùng orj1080
+                    tasks.append(get_best_url(pid))
                 else:
-                    raw = pic.get("large", {}).get("url") or pic.get("url", "")
+                    # fallback không có pid
+                    fallback = pic.get("large", {}).get("url") or pic.get("url", "")
+                    tasks.append(asyncio.coroutine(lambda u=fallback: (u, 0))())
 
-                if thumb:
-                    thumb_urls.append(thumb)
-                if raw:
-                    raw_urls.append(raw)
+            results = await asyncio.gather(*tasks)
+            for raw_url, size in results:
+                raw_urls.append(raw_url)
+                raw_sizes.append(size)
+
+            print(f"[Scraper] {len(raw_urls)} ảnh, sizes: {[format_size(s) for s in raw_sizes]}")
 
         except Exception as e:
             print(f"[Scraper Error] {e}")
+            import traceback
+            traceback.print_exc()
 
-    return thumb_urls, raw_urls
+    return thumb_urls, raw_urls, raw_sizes
 
 async def download_image(url: str) -> bytes | None:
     async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
