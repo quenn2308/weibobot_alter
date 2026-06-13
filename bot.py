@@ -61,7 +61,6 @@ async def get_best_url(pid: str) -> tuple[str, int]:
                 resp = await client.head(url, timeout=8)
                 if resp.status_code == 200:
                     size = int(resp.headers.get("content-length", 0))
-                    print(f"[SIZE] {s}/{pid[:16]}... → {size} bytes")
                     if size > best_size:
                         best_size = size
                         best_url = url
@@ -116,7 +115,6 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str], list[int]]:
             pics = post_data.get("pics", [])
             pics_more = post_data.get("pics_more", [])
             all_pics = pics + pics_more
-            print(f"[Scraper] pics: {len(pics)}, pics_more: {len(pics_more)}, total: {len(all_pics)}")
 
             tasks = []
             for pic in all_pics:
