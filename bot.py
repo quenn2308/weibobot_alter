@@ -36,6 +36,7 @@ def extract_weibo_id(url: str) -> str | None:
         r"weibo\.com/detail/(\w+)",
         r"m\.weibo\.cn/detail/(\w+)",
         r"m\.weibo\.cn/\d+/(\w+)",
+        r"m\.weibo\.cn/status/(\w+)",   # thêm dòng này
     ]
     for p in patterns:
         m = re.search(p, url)
