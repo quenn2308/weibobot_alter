@@ -287,6 +287,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Paste link bài post Weibo → bot hiện preview album\n"
         "→ Bấm Download All hoặc chọn từng ảnh\n\n"
         "/links <url> — Chỉ lấy URL raw"
+        "/all <url> — Download All Files"
     )
 
 async def cmd_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -333,7 +334,7 @@ async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     success = 0
     for i, (img_bytes, size) in enumerate(zip(all_bytes, raw_sizes)):
         if img_bytes:
-            await send_image_smart(
+            await send_as_file(
                 msg,
                 img_bytes,
                 filename=get_filename_from_url(raw_urls[i]),
