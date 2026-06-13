@@ -1,26 +1,36 @@
 # bot.py
-# pip install python-telegram-bot requests beautifulsoup4 httpx
+# pip install python-telegram-bot httpx beautifulsoup4
 
 import os
 import re
+import io
 import httpx
 import asyncio
-from bs4 import BeautifulSoup
-from telegram import Update
+from telegram import Update, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+HEADERS_API = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
+    "Referer": "https://m.weibo.cn/",
+    "Accept": "application/json, text/plain, */*",
+    "MWeibo-Pwa": "1",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+HEADERS_IMG = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://weibo.com/",
-    "Cookie": "",  # Thêm cookie Weibo nếu bài post cần đăng nhập
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Cache-Control": "no-cache",
+    "Cookie": "",  # thêm cookie nếu cần
 }
 
 # ─── SCRAPER ──────────────────────────────────────────────────────────────────
 
 def extract_weibo_id(url: str) -> str | None:
-    """Lấy post ID từ link weibo"""
     patterns = [
         r"weibo\.com/\d+/(\w+)",
         r"weibo\.com/detail/(\w+)",
@@ -39,40 +49,26 @@ async def get_raw_images(url: str) -> list[str]:
         return []
 
     image_urls = []
-
-    # Dùng API mobile chính xác
     api_url = f"https://m.weibo.cn/statuses/show?id={post_id}"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
-        "Referer": "https://m.weibo.cn/",
-        "Accept": "application/json, text/plain, */*",
-        "MWeibo-Pwa": "1",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=HEADERS_API, follow_redirects=True) as client:
         try:
             resp = await client.get(api_url, timeout=15)
             data = resp.json()
-
-            # Ảnh nằm trong data.pics
             pics = data.get("data", {}).get("pics", [])
 
             for pic in pics:
-                # Ưu tiên large → original → url
                 raw = (
                     pic.get("large", {}).get("url") or
                     pic.get("original", {}).get("url") or
                     pic.get("url", "")
                 )
                 if raw:
-                    # Đổi thumbnail → ảnh gốc
                     raw = re.sub(r"/thumb\d+/", "/large/", raw)
                     raw = re.sub(r"orj\d+", "large", raw)
                     image_urls.append(raw)
 
-            print(f"[Scraper] Tìm thấy {len(image_urls)} ảnh từ API")
+            print(f"[Scraper] Tìm thấy {len(image_urls)} ảnh")
 
         except Exception as e:
             print(f"[Scraper Error] {e}")
@@ -80,12 +76,21 @@ async def get_raw_images(url: str) -> list[str]:
     return image_urls
 
 async def download_image(url: str) -> bytes | None:
-    """Tải ảnh về dạng bytes"""
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
         try:
             resp = await client.get(url, timeout=20)
+            print(f"[Download] {url} → status {resp.status_code}")
             if resp.status_code == 200:
                 return resp.content
+            elif resp.status_code == 403:
+                # Thử đổi subdomain sinaimg
+                for sub in ["wx1", "wx2", "wx3", "wx4"]:
+                    alt_url = re.sub(r"wx\d\.sinaimg\.cn", f"{sub}.sinaimg.cn", url)
+                    if alt_url == url:
+                        continue
+                    resp2 = await client.get(alt_url, timeout=20)
+                    if resp2.status_code == 200:
+                        return resp2.content
         except Exception as e:
             print(f"[Download Error] {url} — {e}")
     return None
@@ -96,13 +101,12 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🖼 Weibo Image Bot\n\n"
         "Gửi link bài post Weibo, bot sẽ:\n"
-        "/links <url> — Gửi danh sách URL ảnh raw\n"
-        "/download <url> — Tải và gửi file ảnh\n\n"
-        "Hoặc paste link thẳng → tự động gửi URL"
+        "/links <url> — Danh sách URL ảnh raw\n"
+        "/download <url> — Tải và gửi ảnh\n\n"
+        "Hoặc paste link thẳng → tự động trả URL"
     )
 
 async def cmd_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Trả về danh sách URL ảnh raw"""
     if not ctx.args:
         await update.message.reply_text("❌ Dùng: /links <weibo_url>")
         return
@@ -112,10 +116,9 @@ async def cmd_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     images = await get_raw_images(url)
     if not images:
-        await msg.edit_text("❌ Không tìm thấy ảnh nào. Kiểm tra link hoặc thêm cookie.")
+        await msg.edit_text("❌ Không tìm thấy ảnh nào.")
         return
 
-    # Chia thành chunks 10 link/tin nhắn
     chunks = [images[i:i+10] for i in range(0, len(images), 10)]
     await msg.edit_text(f"✅ Tìm thấy {len(images)} ảnh:")
     for chunk in chunks:
@@ -123,7 +126,6 @@ async def cmd_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cmd_download(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Tải ảnh về và gửi file"""
     if not ctx.args:
         await update.message.reply_text("❌ Dùng: /download <weibo_url>")
         return
@@ -136,23 +138,38 @@ async def cmd_download(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("❌ Không tìm thấy ảnh nào.")
         return
 
-    await msg.edit_text(f"📦 Đang gửi {len(images)} ảnh...")
+    await msg.edit_text(f"📦 Tìm thấy {len(images)} ảnh, đang tải...")
 
+    # Tải tất cả ảnh trước
+    media_data = []
     for i, img_url in enumerate(images, 1):
         data = await download_image(img_url)
-        if data:
-            filename = f"weibo_{i:03d}.jpg"
-            await update.message.reply_document(
-                document=data,
-                filename=filename,
-                caption=f"[{i}/{len(images)}] {img_url}"
-            )
-            await asyncio.sleep(0.5)  # tránh flood
+        if data is not None and len(data) > 0:
+            media_data.append((i, img_url, data))
         else:
-            await update.message.reply_text(f"⚠️ Không tải được ảnh {i}: {img_url}")
+            print(f"[Skip] Không tải được ảnh {i}: {img_url}")
+
+    if not media_data:
+        await msg.edit_text("❌ Không tải được ảnh nào.")
+        return
+
+    # Gửi theo nhóm media (tối đa 10 ảnh/nhóm)
+    chunks = [media_data[i:i+10] for i in range(0, len(media_data), 10)]
+    for chunk in chunks:
+        media_group = []
+        for idx, (i, img_url, data) in enumerate(chunk):
+            media_group.append(
+                InputMediaPhoto(
+                    media=io.BytesIO(data),
+                    caption=img_url if idx == 0 else None
+                )
+            )
+        await update.message.reply_media_group(media=media_group)
+        await asyncio.sleep(1)
+
+    await msg.edit_text(f"✅ Hoàn tất: {len(media_data)}/{len(images)} ảnh")
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Paste link thẳng → tự động trả URL"""
     text = update.message.text or ""
     if "weibo.com" not in text and "weibo.cn" not in text:
         return
@@ -161,13 +178,11 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     images = await get_raw_images(text.strip())
 
     if not images:
-        await msg.edit_text("❌ Không tìm thấy ảnh. Thêm cookie nếu bài post cần login.")
+        await msg.edit_text("❌ Không tìm thấy ảnh. Thử thêm cookie nếu bài post cần login.")
         return
 
     chunks = [images[i:i+10] for i in range(0, len(images), 10)]
-    await msg.edit_text(
-        f"✅ {len(images)} ảnh — dùng /download <url> để tải file:"
-    )
+    await msg.edit_text(f"✅ {len(images)} ảnh — dùng /download <url> để tải file:")
     for chunk in chunks:
         text_out = "\n".join(f"`{u}`" for u in chunk)
         await update.message.reply_text(text_out, parse_mode="Markdown")
