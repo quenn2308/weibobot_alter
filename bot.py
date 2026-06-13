@@ -222,12 +222,24 @@ async def show_preview(update: Update, url: str):
 
 async def send_as_file(message, data: bytes, filename: str, caption: str = ""):
     """Gửi ảnh dạng file document — tải về máy trực tiếp, không giới hạn 10MB"""
-    await message.reply_document(
-        document=io.BytesIO(data),
-        filename=filename,
-        caption=caption,
-        parse_mode="Markdown"
-    )
+    for attempt in range(1, 4):
+        try:
+            await message.reply_document(
+                document=io.BytesIO(data),
+                filename=filename,
+                caption=caption,
+                parse_mode="Markdown",
+                write_timeout=180,   # override: 3 phút cho file lớn
+                read_timeout=60,
+                connect_timeout=30,
+            )
+            return  # thành công, thoát
+        except Exception as e:
+            print(f"[Upload Error] attempt {attempt}/3 — {filename} — {e}")
+            if attempt < 3:
+                await asyncio.sleep(3 * attempt)  # backoff: 3s, 6s
+            else:
+                raise  # đã thử 3 lần, ném lỗi ra ngoài để caller xử lý
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -303,28 +315,26 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await show_preview(update, text)
 
 async def download_and_send_all(message, raw_urls: list, raw_sizes: list):
-    """Tải tất cả ảnh raw và gửi dạng document"""
-    all_bytes = await asyncio.gather(*[download_image(u) for u in raw_urls])
+    """Tải và gửi tuần tự từng ảnh — tránh OOM và timeout khi gather nhiều file lớn"""
+    success = 0
+    for i, (img_url, size) in enumerate(zip(raw_urls, raw_sizes)):
+        b = await download_image(img_url)
+        if b:
+            try:
+                await send_as_file(
+                    message,
+                    b,
+                    filename=get_filename_from_url(img_url),
+                    caption=f"#{i+1} — {format_size(size)}"
+                )
+                success += 1
+            except Exception as e:
+                await message.reply_text(f"⚠️ Không upload được ảnh #{i+1}: {e}")
+        else:
+            await message.reply_text(f"⚠️ Không tải được ảnh #{i+1}: {img_url}")
+        await asyncio.sleep(0.8)  # tránh flood Telegram
 
-    valid = [
-        (i, b, raw_urls[i], raw_sizes[i])
-        for i, b in enumerate(all_bytes) if b
-    ]
-
-    if not valid:
-        await message.reply_text("❌ Không tải được ảnh nào.")
-        return
-
-    for i, b, img_url, size in valid:
-        await send_as_file(
-            message,
-            b,
-            filename=get_filename_from_url(img_url),
-            caption=f"#{i+1} — {format_size(size)}"
-        )
-        await asyncio.sleep(0.5)
-
-    await message.reply_text(f"✅ Hoàn tất: {len(valid)}/{len(raw_urls)} ảnh")
+    await message.reply_text(f"✅ Hoàn tất: {success}/{len(raw_urls)} ảnh")
 
 async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
@@ -349,7 +359,7 @@ def main():
     request = HTTPXRequest(
         connection_pool_size=8,
         read_timeout=60,
-        write_timeout=60,
+        write_timeout=180,   # 3 phút — đủ cho ảnh ~20MB qua mạng chậm
         connect_timeout=30,
         pool_timeout=30,
     )
