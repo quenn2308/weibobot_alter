@@ -69,9 +69,32 @@ async def get_best_url(pid: str) -> tuple[str, int]:
 
     print(f"[BEST] {best_url.split('/')[3]} → {best_size} bytes")
     return best_url, best_size
+# Tăng timeout và retry cho download_image
+async def download_image(url: str, timeout: int = 30, retries: int = 3) -> bytes | None:
+    for attempt in range(retries):
+        async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
+            try:
+                resp = await client.get(url, timeout=timeout)
+                if resp.status_code == 200:
+                    return resp.content
+                elif resp.status_code == 403:
+                    for sub in ["wx1", "wx2", "wx3", "wx4"]:
+                        alt_url = re.sub(r"wx\d\.sinaimg\.cn", f"{sub}.sinaimg.cn", url)
+                        if alt_url == url:
+                            continue
+                        resp2 = await client.get(alt_url, timeout=timeout)
+                        if resp2.status_code == 200:
+                            return resp2.content
+            except (httpx.ReadTimeout, httpx.ConnectTimeout):
+                print(f"[Timeout] attempt {attempt+1}/{retries}: {url}")
+                await asyncio.sleep(2)
+            except Exception as e:
+                print(f"[Download Error] {url} — {e}")
+                break
+    return None
 
+# Fix get >9 ảnh — Weibo tách pics_more nếu bài có nhiều hơn 9 ảnh
 async def get_raw_images(url: str) -> tuple[list[str], list[str], list[int]]:
-    """Trả về (thumb_urls, raw_urls, raw_sizes)"""
     post_id = extract_weibo_id(url)
     if not post_id:
         print(f"[Scraper] Không extract được post_id từ: {url}")
@@ -80,32 +103,36 @@ async def get_raw_images(url: str) -> tuple[list[str], list[str], list[int]]:
     print(f"[Scraper] post_id: {post_id}")
     thumb_urls = []
     raw_urls = []
-    raw_sizes = []
     api_url = f"https://m.weibo.cn/statuses/show?id={post_id}"
 
     async with httpx.AsyncClient(headers=HEADERS_API, follow_redirects=True) as client:
         try:
             resp = await client.get(api_url, timeout=15)
             data = resp.json()
-            pics = data.get("data", {}).get("pics", [])
+            post_data = data.get("data", {})
 
-            # Check size tất cả ảnh song song
+            # Gộp pics + pics_more (Weibo tách ra khi >9 ảnh)
+            pics = post_data.get("pics", [])
+            pics_more = post_data.get("pics_more", [])
+            all_pics = pics + pics_more
+            print(f"[Scraper] pics: {len(pics)}, pics_more: {len(pics_more)}, total: {len(all_pics)}")
+
             tasks = []
-            for pic in pics:
+            for pic in all_pics:
                 pid = pic.get("pid", "")
                 thumb = pic.get("url", "")
                 thumb_urls.append(thumb)
                 if pid:
                     tasks.append(get_best_url(pid))
                 else:
-                    # fallback không có pid
                     fallback = pic.get("large", {}).get("url") or pic.get("url", "")
-                    tasks.append(asyncio.coroutine(lambda u=fallback: (u, 0))())
+                    async def _fallback(u=fallback):
+                        return (u, 0)
+                    tasks.append(_fallback())
 
             results = await asyncio.gather(*tasks)
-            for raw_url, size in results:
-                raw_urls.append(raw_url)
-                raw_sizes.append(size)
+            raw_urls = [u for u, s in results]
+            raw_sizes = [s for u, s in results]
 
             print(f"[Scraper] {len(raw_urls)} ảnh, sizes: {[format_size(s) for s in raw_sizes]}")
 
@@ -123,24 +150,6 @@ def get_filename_from_url(url: str) -> str:
     if match:
         return match.group(1)
     return "weibo_image.jpg"
-
-async def download_image(url: str) -> bytes | None:
-    async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
-        try:
-            resp = await client.get(url, timeout=20)
-            if resp.status_code == 200:
-                return resp.content
-            elif resp.status_code == 403:
-                for sub in ["wx1", "wx2", "wx3", "wx4"]:
-                    alt_url = re.sub(r"wx\d\.sinaimg\.cn", f"{sub}.sinaimg.cn", url)
-                    if alt_url == url:
-                        continue
-                    resp2 = await client.get(alt_url, timeout=20)
-                    if resp2.status_code == 200:
-                        return resp2.content
-        except Exception as e:
-            print(f"[Download Error] {url} — {e}")
-    return None
 
 async def get_image_size(url: str) -> int:
     async with httpx.AsyncClient(headers=HEADERS_IMG, follow_redirects=True) as client:
