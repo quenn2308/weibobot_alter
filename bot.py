@@ -46,16 +46,30 @@ def extract_weibo_id(url: str) -> str | None:
 async def get_raw_images(url: str) -> list[str]:
     post_id = extract_weibo_id(url)
     if not post_id:
+        print(f"[Scraper] Không extract được post_id từ: {url}")
         return []
 
+    print(f"[Scraper] post_id: {post_id}")
     image_urls = []
     api_url = f"https://m.weibo.cn/statuses/show?id={post_id}"
 
     async with httpx.AsyncClient(headers=HEADERS_API, follow_redirects=True) as client:
         try:
             resp = await client.get(api_url, timeout=15)
+            print(f"[Scraper] HTTP status: {resp.status_code}")
+            print(f"[Scraper] Response raw: {resp.text[:500]}")  # in 500 ký tự đầu
+
             data = resp.json()
-            pics = data.get("data", {}).get("pics", [])
+            print(f"[Scraper] JSON keys: {list(data.keys())}")
+
+            inner = data.get("data", {})
+            print(f"[Scraper] data keys: {list(inner.keys()) if isinstance(inner, dict) else type(inner)}")
+
+            pics = inner.get("pics", [])
+            print(f"[Scraper] pics count: {len(pics)}")
+            if pics:
+                print(f"[Scraper] pic[0] keys: {list(pics[0].keys())}")
+                print(f"[Scraper] pic[0] sample: {pics[0]}")
 
             for pic in pics:
                 raw = (
@@ -68,10 +82,10 @@ async def get_raw_images(url: str) -> list[str]:
                     raw = re.sub(r"orj\d+", "large", raw)
                     image_urls.append(raw)
 
-            print(f"[Scraper] Tìm thấy {len(image_urls)} ảnh")
-
         except Exception as e:
             print(f"[Scraper Error] {e}")
+            import traceback
+            traceback.print_exc()
 
     return image_urls
 
