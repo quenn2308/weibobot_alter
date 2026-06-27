@@ -354,7 +354,6 @@ def main():
         port=PORT,
         url_path="/webhook",
         webhook_url=f"{WEBHOOK_URL}/webhook",
-        secret_token=os.environ.get("WEBHOOK_SECRET", ""),
     )
 
 if __name__ == "__main__":
