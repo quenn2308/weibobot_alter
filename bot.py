@@ -331,21 +331,29 @@ async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    # Tăng timeout upload file lớn
     request = HTTPXRequest(
         connection_pool_size=8,
         read_timeout=60,
-        write_timeout=180,   # 3 phút — đủ cho ảnh ~20MB qua mạng chậm
+        write_timeout=180,
         connect_timeout=30,
         pool_timeout=30,
     )
     app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("all", cmd_all))      # thêm dòng này
+    app.add_handler(CommandHandler("all", cmd_all))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    print("Bot đang chạy...")
-    app.run_polling()
+
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://yourapp.railway.app
+    PORT = int(os.environ.get("PORT", 8443))
+
+    print(f"Bot chạy webhook tại port {PORT}...")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+        secret_token=os.environ.get("WEBHOOK_SECRET", ""),
+    )
 
 if __name__ == "__main__":
     main()
