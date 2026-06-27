@@ -24,6 +24,11 @@ jobs:
             --allow-unrelated-histories \
             --no-edit \
             -X theirs
+          
+          # Xóa file workflow của repo nguồn, giữ lại của repo đích
+          git checkout HEAD -- .github/workflows/
+          git add .github/workflows/
+          git commit --allow-empty -m "chore: restore target workflows after merge"
 
       - name: Push
         run: git push origin main
