@@ -324,36 +324,42 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await show_preview(update, text)
 
 async def download_and_send_all(message, raw_urls: list, raw_sizes: list, concurrency: int = 3):
-    """Upload tối đa `concurrency` ảnh song song, thay vì tuần tự + sleep 0.8s.
-    Với album nhiều ảnh nặng (>10MB/ảnh), tuần tự rất chậm; song song hoá giúp
-    giảm mạnh tổng thời gian chạy mà vẫn không spam Telegram quá nhiều request
-    cùng lúc."""
+    """Tải song song (tối đa `concurrency` request cùng lúc) nhưng GỬI tuần tự
+    theo đúng thứ tự #1, #2, #3... — tách riêng pha download và pha gửi.
+    Lý do: nếu vừa download vừa gửi song song (như trước), ảnh nào tải xong
+    trước sẽ hiện trước trong chat, làm lộn thứ tự. Tách ra thế này: vẫn tải
+    nền song song để nhanh, nhưng chỉ gửi khi đến đúng lượt của nó — vì ảnh
+    sau thường đã tải xong sẵn (chạy nền song song), nên hầu như không phải
+    chờ thêm, mà vẫn giữ đúng thứ tự khi hiện ra."""
     semaphore = asyncio.Semaphore(concurrency)
-    success_count = 0
-    counter_lock = asyncio.Lock()
+    download_results: list[bytes | None] = [None] * len(raw_urls)
 
-    async def _send_one(i: int, img_url: str, size: int):
-        nonlocal success_count
+    async def _download_one(i: int, img_url: str):
         async with semaphore:
-            b = await download_image(img_url)
-            if b:
-                try:
-                    await send_as_file(
-                        message,
-                        b,
-                        filename=get_filename_from_url(img_url),
-                        caption=f"#{i+1} — {format_size(size)}"
-                    )
-                    async with counter_lock:
-                        success_count += 1
-                except Exception as e:
-                    await message.reply_text(f"⚠️ Không upload được ảnh #{i+1}: {e}")
-            else:
-                await message.reply_text(f"⚠️ Không tải được ảnh #{i+1}: {img_url}")
+            download_results[i] = await download_image(img_url)
 
-    await asyncio.gather(*[
-        _send_one(i, url, size) for i, (url, size) in enumerate(zip(raw_urls, raw_sizes))
-    ])
+    # Bắt đầu tải tất cả ngay (chạy nền song song, giới hạn bởi semaphore)
+    download_tasks = [
+        asyncio.create_task(_download_one(i, url)) for i, url in enumerate(raw_urls)
+    ]
+
+    success_count = 0
+    for i, (img_url, size) in enumerate(zip(raw_urls, raw_sizes)):
+        await download_tasks[i]  # ảnh này thường đã tải xong sẵn, ít khi phải chờ thêm
+        b = download_results[i]
+        if b:
+            try:
+                await send_as_file(
+                    message,
+                    b,
+                    filename=get_filename_from_url(img_url),
+                    caption=f"#{i+1} — {format_size(size)}"
+                )
+                success_count += 1
+            except Exception as e:
+                await message.reply_text(f"⚠️ Không upload được ảnh #{i+1}: {e}")
+        else:
+            await message.reply_text(f"⚠️ Không tải được ảnh #{i+1}: {img_url}")
 
     await message.reply_text(f"✅ Hoàn tất: {success_count}/{len(raw_urls)} ảnh")
 
