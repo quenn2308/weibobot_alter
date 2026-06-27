@@ -1,5 +1,6 @@
 # bot.py
 # pip install python-telegram-bot httpx beautifulsoup4
+# fix webhook
 
 import os
 import re
@@ -345,12 +346,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://yourapp.railway.app
-    PORT = int(os.environ.get("PORT", 8443))
+    PORT = int(os.environ.get("PORT"))  # Railway tự set, thường là 8080
 
     print(f"Bot chạy webhook tại port {PORT}...")
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
+        url_path="/webhook",
         webhook_url=f"{WEBHOOK_URL}/webhook",
         secret_token=os.environ.get("WEBHOOK_SECRET", ""),
     )
