@@ -1,0 +1,26 @@
+name: Auto Merge from Source Repo
+
+on:
+  repository_dispatch:
+    types: [source-pushed]
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Add source remote & merge
+        run: |
+          git remote add source https://github.com/quenguyen2308/weibobot.git
+          git fetch source
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge source/main --allow-unrelated-histories --no-edit
+
+      - name: Push
+        run: git push origin main
