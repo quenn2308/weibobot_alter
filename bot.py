@@ -314,7 +314,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🖼 Weibo Image Bot\n\n"
         "Paste link bài post Weibo → bot hiện preview album\n"
         "→ Bấm Download All hoặc chọn từng ảnh\n\n"
-        "/all <url> — Download All Files"
+        "/a <url> — Download All Files"
     )
 
 async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -391,7 +391,7 @@ def main():
     )
     app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("all", cmd_all))
+    app.add_handler(CommandHandler("a", cmd_all))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
 
