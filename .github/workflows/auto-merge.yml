@@ -21,15 +21,18 @@ jobs:
           git fetch source
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Thực hiện merge nhưng chưa commit ngay
           git merge source/main \
             --allow-unrelated-histories \
             --no-edit \
-            -X theirs
+            -X theirs \
+            --no-commit
           
-          # Xóa file workflow của repo nguồn, giữ lại của repo đích
+          # Khôi phục lại thư mục workflow của repo đích
           git checkout HEAD -- .github/workflows/
-          git add .github/workflows/
-          git commit --allow-empty -m "chore: restore target workflows after merge"
+          
+          # Hoàn tất việc merge bằng tin nhắn mặc định của Git
+          git commit --no-edit
 
       - name: Push
         run: git push origin main
