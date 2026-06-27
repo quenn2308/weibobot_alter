@@ -12,6 +12,12 @@ from telegram.request import HTTPXRequest
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
+# Timeout an toàn cho job tải+upload toàn bộ album. Vì bot.py chạy như một
+# process bền (Railway), KHÔNG bị Vercel kill như webhook.py — đây chỉ là lưới
+# an toàn để tránh 1 chat bị treo vô hạn nếu CDN Weibo/Telegram bị đứng mạng,
+# và để báo lỗi rõ ràng cho user thay vì im lặng chờ mãi.
+HEAVY_TASK_TIMEOUT_SEC = int(os.environ.get("HEAVY_TASK_TIMEOUT_SEC", "180"))
+
 HEADERS_API = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15",
     "Referer": "https://m.weibo.cn/",
@@ -49,7 +55,10 @@ def extract_weibo_id(url: str) -> str | None:
     return None
 
 async def get_best_url(pid: str) -> tuple[str, int]:
-    """Thử các size, trả về (url_lớn_nhất, size_bytes)"""
+    """Thử các size, trả về (url_lớn_nhất, size_bytes).
+    Có fallback sang subdomain khác (wx1/wx3/wx4) khi wx2 trả 403 — một số
+    size/subdomain bị Weibo chặn ngẫu nhiên, nếu không fallback sẽ mất hẳn
+    variant đó khỏi phép so sánh max-size."""
     sizes = ["orj1080", "mw2000", "orj480", "large", "orj360"]
     best_url = ""
     best_size = 0
@@ -64,6 +73,16 @@ async def get_best_url(pid: str) -> tuple[str, int]:
                     if size > best_size:
                         best_size = size
                         best_url = url
+                elif resp.status_code == 403:
+                    for sub in ["wx1", "wx3", "wx4"]:
+                        alt = f"https://{sub}.sinaimg.cn/{s}/{pid}.jpg"
+                        resp2 = await client.head(alt, timeout=8)
+                        if resp2.status_code == 200:
+                            size = int(resp2.headers.get("content-length", 0))
+                            if size > best_size:
+                                best_size = size
+                                best_url = alt
+                            break
             except:
                 pass
 
@@ -237,6 +256,20 @@ async def send_as_file(message, data: bytes, filename: str, caption: str = ""):
             else:
                 raise  # đã thử 3 lần, ném lỗi ra ngoài để caller xử lý
 
+async def run_download_all_safe(message, images: list, sizes: list):
+    """Bọc download_and_send_all với timeout an toàn — nếu mạng/CDN bị đứng
+    quá lâu, báo lỗi rõ ràng cho user thay vì treo vô hạn."""
+    try:
+        await asyncio.wait_for(
+            download_and_send_all(message, images, sizes),
+            timeout=HEAVY_TASK_TIMEOUT_SEC
+        )
+    except asyncio.TimeoutError:
+        await message.reply_text(
+            f"⏱ Quá {HEAVY_TASK_TIMEOUT_SEC}s mà chưa xong (mạng/CDN Weibo có thể đang chậm). "
+            "Thử lại sau hoặc tải từng ảnh bằng nút riêng."
+        )
+
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -254,7 +287,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "dl_all":
         await query.message.reply_text(f"⬇️ Đang tải {len(images)} ảnh...")
-        await download_and_send_all(query.message, images, sizes)
+        await run_download_all_safe(query.message, images, sizes)
 
     elif data.startswith("dl_one_"):
         idx = int(data.replace("dl_one_", ""))
@@ -290,27 +323,39 @@ async def handle_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await show_preview(update, text)
 
-async def download_and_send_all(message, raw_urls: list, raw_sizes: list):
-    """Tải và gửi tuần tự từng ảnh — tránh OOM và timeout khi gather nhiều file lớn"""
-    success = 0
-    for i, (img_url, size) in enumerate(zip(raw_urls, raw_sizes)):
-        b = await download_image(img_url)
-        if b:
-            try:
-                await send_as_file(
-                    message,
-                    b,
-                    filename=get_filename_from_url(img_url),
-                    caption=f"#{i+1} — {format_size(size)}"
-                )
-                success += 1
-            except Exception as e:
-                await message.reply_text(f"⚠️ Không upload được ảnh #{i+1}: {e}")
-        else:
-            await message.reply_text(f"⚠️ Không tải được ảnh #{i+1}: {img_url}")
-        await asyncio.sleep(0.8)  # tránh flood Telegram
+async def download_and_send_all(message, raw_urls: list, raw_sizes: list, concurrency: int = 3):
+    """Upload tối đa `concurrency` ảnh song song, thay vì tuần tự + sleep 0.8s.
+    Với album nhiều ảnh nặng (>10MB/ảnh), tuần tự rất chậm; song song hoá giúp
+    giảm mạnh tổng thời gian chạy mà vẫn không spam Telegram quá nhiều request
+    cùng lúc."""
+    semaphore = asyncio.Semaphore(concurrency)
+    success_count = 0
+    counter_lock = asyncio.Lock()
 
-    await message.reply_text(f"✅ Hoàn tất: {success}/{len(raw_urls)} ảnh")
+    async def _send_one(i: int, img_url: str, size: int):
+        nonlocal success_count
+        async with semaphore:
+            b = await download_image(img_url)
+            if b:
+                try:
+                    await send_as_file(
+                        message,
+                        b,
+                        filename=get_filename_from_url(img_url),
+                        caption=f"#{i+1} — {format_size(size)}"
+                    )
+                    async with counter_lock:
+                        success_count += 1
+                except Exception as e:
+                    await message.reply_text(f"⚠️ Không upload được ảnh #{i+1}: {e}")
+            else:
+                await message.reply_text(f"⚠️ Không tải được ảnh #{i+1}: {img_url}")
+
+    await asyncio.gather(*[
+        _send_one(i, url, size) for i, (url, size) in enumerate(zip(raw_urls, raw_sizes))
+    ])
+
+    await message.reply_text(f"✅ Hoàn tất: {success_count}/{len(raw_urls)} ảnh")
 
 async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
@@ -326,7 +371,7 @@ async def cmd_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await msg.edit_text(f"📦 Tìm thấy {len(raw_urls)} ảnh, đang tải...")
-    await download_and_send_all(update.message, raw_urls, raw_sizes)
+    await run_download_all_safe(update.message, raw_urls, raw_sizes)
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
